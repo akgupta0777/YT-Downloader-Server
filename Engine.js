@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
-const app =  express();
+const app = express();
 app.use(cors());
 
 const chromeOptions = {
@@ -9,103 +9,105 @@ const chromeOptions = {
   defaultViewport: null,
   args: [
       "--no-sandbox",
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--disable-gpu",
+      "--disable-features=site-per-process",
+      "--no-zygote",
+      "--single-process"
   ],
 };
 
 const getVideoInfo = async (videoURL) => {
-  const browser = await puppeteer.launch(chromeOptions)
-  try{
-  const page = await browser.newPage();
-  await page.goto('https://yt5s.com',{
-    waitUntil:'networkidle2'
-  });
-  await page.$eval('input[name=q]', (el,value) => el.value = value,videoURL);
-  await (await page.$('button.btn-red')).click();
-  await page.waitForSelector("div.thumbnail > img[src]",{timeout:5000});
-  const info = [];
-  const thumbnail = await page.$eval('.thumbnail img[src]', imgs => imgs.getAttribute('src'));
-  const title = await page.$eval('.clearfix h3',e => e.innerText);
-  const channel = await page.$eval('.clearfix p',el => el.innerText);
-  const length = await page.$eval('.clearfix p.mag0',el => el.innerText);
-  info.push({thumbnail,title,channel,length});
-  const formats = await page.$$eval('select#formatSelect option',(options) => options.map(option => {
-      const format = option.parentElement.label;
-      const textContent = option.textContent.trim();
-      let arr = textContent.split(" ");
-      return {
-          "value":option.value,
-          "format":format,
-          "size":`${arr[1]} ${arr[2]}`
-      } 
-  }));
-  info.push(formats);
-  console.log("[VIDEO FOUND]")
-  console.log(info[0]);
-  return info;
-  }catch(err){
-    console.log("[VIDEO INFO] ",err);
-    return {'error':404};
-  }finally{
-    await browser.close();
-  }
-}
-
-const getVideoLink =  async (videoURL,value,format) => {
   const browser = await puppeteer.launch(chromeOptions);
-  try{
-  const page = await browser.newPage();
-  await page.goto('https://yt5s.com',{
-    waitUntil:'networkidle2'
-  });
-  await page.$eval('input[name=q]', (el,value) => el.value = value,videoURL);
-  await (await page.$('button.btn-red')).click();
-  await page.waitForSelector('div.thumbnail');
-  await page.$eval('select#formatSelect optgroup[label="'+format+'"] option[value="'+value+'"]',(option) => {option.selected=true;});
-  await (await page.$('button#btn-action')).click();
-  await page.waitForSelector('a.form-control.mesg-convert.success',{visible: true});
-  const videoLink = await page.$eval('a.form-control.mesg-convert.success',el => el.href);
-  console.log(`Downloading youtube video ${videoURL} with quality ${value} and ${format}`);
-  await browser.close();
-  return videoLink;
-  }catch(err){
-    console.log("[DOWNLOAD] ",err);
-  }finally{
+  try {
+    const page = await browser.newPage();
+    await page.goto('https://yt5s.com', { waitUntil: 'networkidle2', timeout: 60000 });
+
+    await page.waitForSelector('input[name=q]', { visible: true });
+    const inputField = await page.$('input[name=q]');
+    await inputField.click({ clickCount: 3 });
+    await inputField.type(videoURL, { delay: 100 });
+
+    await page.waitForSelector('button.btn-red', { visible: true });
+    await page.click('button.btn-red');
+
+    await page.waitForSelector('div.thumbnail > img[src]', { timeout: 10000 });
+
+    const thumbnail = await page.$eval('.thumbnail img[src]', img => img.getAttribute('src'));
+    const title = await page.$eval('.clearfix h3', e => e.innerText);
+    const channel = await page.$eval('.clearfix p', el => el.innerText);
+    const length = await page.$eval('.clearfix p.mag0', el => el.innerText);
+    
+    const formats = await page.$$eval('select#formatSelect option', (options) =>
+      options.map(option => ({
+        value: option.value,
+        format: option.parentElement.label,
+        size: option.textContent.split(" ").slice(1, 3).join(" ")
+      }))
+    );
+
+    console.log("[VIDEO FOUND]", title);
+    return { thumbnail, title, channel, length, formats };
+
+  } catch (err) {
+    console.log("[VIDEO INFO] Error:", err.message);
+    return { error: err.message };
+  } finally {
     await browser.close();
   }
-}
+};
 
-app.get('/', (req,res) => {
-  res.send("Server started");
-})
+const getVideoLink = async (videoURL, value, format) => {
+  const browser = await puppeteer.launch(chromeOptions);
+  try {
+    const page = await browser.newPage();
+    await page.goto('https://yt5s.com', { waitUntil: 'networkidle2', timeout: 60000 });
 
-app.get('/download',async (req,res) => {
-    try{
-    const videoURL = req.query.url;
-    const value = req.query.v;
-    const format = req.query.f;
-    const videoLink = await getVideoLink(videoURL,value,format);
-    if(videoLink){
-      res.redirect(videoLink);
-    }else res.send({code:404});
-    }catch(err){
-      console.log("[GET /download]",err);
-    }
-})
+    await page.waitForSelector('input[name=q]', { visible: true });
+    const inputField = await page.$('input[name=q]');
+    await inputField.click({ clickCount: 3 });
+    await inputField.type(videoURL, { delay: 100 });
 
-app.get('/getVideo',async (req,res) => {
-  try{
-  const videoURL = req.query.url;
-  const videoData = await getVideoInfo(videoURL);
-  res.send(videoData);
-  }catch(err){
-    console.log("[GET /getVideo] ",err);
+    await page.waitForSelector('button.btn-red', { visible: true });
+    await page.click('button.btn-red');
+
+    await page.waitForSelector('div.thumbnail', { timeout: 10000 });
+
+    await page.waitForSelector(`select#formatSelect optgroup[label="${format}"] option[value="${value}"]`);
+    await page.select('select#formatSelect', value);
+
+    await page.waitForSelector('button#btn-action', { visible: true });
+    await page.click('button#btn-action');
+
+    await page.waitForSelector('a.form-control.mesg-convert.success', { visible: true });
+    const videoLink = await page.$eval('a.form-control.mesg-convert.success', el => el.href);
+
+    console.log(`Downloading video: ${videoURL}, Quality: ${value}, Format: ${format}`);
+    return videoLink;
+
+  } catch (err) {
+    console.log("[DOWNLOAD ERROR]", err.message);
+    return null;
+  } finally {
+    await browser.close();
   }
-})
+};
+
+app.get('/', (req, res) => res.send("Server started"));
+
+app.get('/download', async (req, res) => {
+  const { url, v, f } = req.query;
+  const videoLink = await getVideoLink(url, v, f);
+  videoLink ? res.redirect(videoLink) : res.send({ code: 404 });
+});
+
+app.get('/getVideo', async (req, res) => {
+  const { url } = req.query;
+  const videoData = await getVideoInfo(url);
+  res.send(videoData);
+});
 
 const port = process.env.PORT || 5000;
-app.listen(port,async () => {
-    console.log(`%cGreen Lights! Server is up and running on port ${port}`,
-    'color:green;');
-})
+app.listen(port, () => console.log(`Server is running on port ${port}`));
